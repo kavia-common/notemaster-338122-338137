@@ -193,6 +193,50 @@ body {
   font-size: 14px;
 }
 
+.sidebar__filter-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.sidebar__selected {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+
+.sidebar__selected-title {
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.sidebar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sidebar__item-left {
+  display: inline-flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+
+.sidebar__item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar__footer {
   margin-top: 14px;
   padding-top: 14px;
@@ -312,6 +356,27 @@ body {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
+  line-height: 1;
+}
+
+/* Tag chips are buttons (for accessibility + click handling). */
+.tag-pill.is-clickable {
+  cursor: pointer;
+}
+
+.tag-pill.is-clickable:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.tag-pill.is-selected {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(59, 130, 246, 0.10);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.tag-pill:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Buttons */

@@ -39,6 +39,10 @@ function normalizeTagInput(input) {
     .filter(Boolean);
 }
 
+function normalizeTagName(name) {
+  return String(name || "").trim();
+}
+
 function formatUpdatedAt(iso) {
   if (!iso) return "";
   try {
@@ -49,11 +53,31 @@ function formatUpdatedAt(iso) {
   }
 }
 
-function TagPill({ name }) {
-  return <span className="tag-pill">{name}</span>;
+function TagPill({ name, selected = false, onClick, title, disabled = false }) {
+  const isClickable = typeof onClick === "function" && !disabled;
+  const className = ["tag-pill", selected ? "is-selected" : "", isClickable ? "is-clickable" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={(e) => {
+        if (!isClickable) return;
+        e.stopPropagation();
+        onClick(name);
+      }}
+      disabled={disabled}
+      title={title || name}
+      aria-pressed={selected}
+    >
+      {name}
+    </button>
+  );
 }
 
-function NoteCard({ note, onOpen, onDelete }) {
+function NoteCard({ note, onOpen, onDelete, selectedTags, onToggleTag }) {
   return (
     <article className="note-card" onClick={() => onOpen(note)} role="button" tabIndex={0}>
       <div className="note-card__title-row">
@@ -65,9 +89,21 @@ function NoteCard({ note, onOpen, onDelete }) {
         {(note.content || "").length > 160 ? `${note.content.slice(0, 160)}…` : note.content}
       </p>
 
-      <div className="note-card__tags">
+      <div className="note-card__tags" aria-label="Note tags">
         {note.tags && note.tags.length ? (
-          note.tags.slice(0, 5).map((t) => <TagPill key={t} name={t} />)
+          note.tags.slice(0, 8).map((tRaw) => {
+            const t = normalizeTagName(tRaw);
+            const isSelected = selectedTags.has(t);
+            return (
+              <TagPill
+                key={t}
+                name={t}
+                selected={isSelected}
+                onClick={onToggleTag}
+                title={isSelected ? `Remove tag filter: ${t}` : `Filter by tag: ${t}`}
+              />
+            );
+          })
         ) : (
           <span className="note-card__muted">No tags</span>
         )}
@@ -434,7 +470,7 @@ function App() {
   const [totalNotes, setTotalNotes] = useState(0);
   const [tags, setTags] = useState([]);
 
-  const [selectedTag, setSelectedTag] = useState("");
+  const [selectedTags, setSelectedTags] = useState(() => new Set());
   const [searchText, setSearchText] = useState("");
   const debouncedSearch = useDebouncedValue(searchText, 350);
   const [showArchived, setShowArchived] = useState(false);
@@ -447,19 +483,46 @@ function App() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorNote, setEditorNote] = useState(null);
 
+  const selectedTagsArray = useMemo(() => Array.from(selectedTags), [selectedTags]);
+  const primarySelectedTag = selectedTagsArray[0] || "";
+
+  // Backend currently supports only a single `tag` query parameter.
+  // We still send one tag to reduce data transfer, then apply full multi-tag filter client-side.
   const queryArgs = useMemo(
     () => ({
       q: debouncedSearch || undefined,
-      tag: selectedTag || undefined,
+      tag: primarySelectedTag || undefined,
       archived: showArchived ? true : undefined,
       limit: 200,
       offset: 0,
     }),
-    [debouncedSearch, selectedTag, showArchived]
+    [debouncedSearch, primarySelectedTag, showArchived]
   );
 
+  const filteredNotes = useMemo(() => {
+    // OR semantics: show notes that contain ANY selected tag.
+    if (!selectedTags.size) return Array.isArray(notes) ? notes : [];
+
+    const out = [];
+    const required = selectedTags;
+    const arr = Array.isArray(notes) ? notes : [];
+    for (const n of arr) {
+      const noteTags = Array.isArray(n?.tags) ? n.tags.map(normalizeTagName) : [];
+      const set = new Set(noteTags);
+      let matches = false;
+      for (const t of required) {
+        if (set.has(t)) {
+          matches = true;
+          break;
+        }
+      }
+      if (matches) out.push(n);
+    }
+    return out;
+  }, [notes, selectedTags]);
+
   const sortedNotes = useMemo(() => {
-    const arr = Array.isArray(notes) ? [...notes] : [];
+    const arr = Array.isArray(filteredNotes) ? [...filteredNotes] : [];
 
     function toTime(value) {
       if (!value) return 0;
@@ -491,7 +554,7 @@ function App() {
 
     arr.sort(cmp);
     return arr;
-  }, [notes, sortBy]);
+  }, [filteredNotes, sortBy]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -525,6 +588,30 @@ function App() {
   function openEdit(note) {
     setEditorNote(note);
     setEditorOpen(true);
+  }
+
+  function clearSelectedTags() {
+    setSelectedTags(new Set());
+  }
+
+  function toggleSelectedTag(tagName) {
+    const t = normalizeTagName(tagName);
+    if (!t) return;
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  }
+
+  function setSingleSelectedTag(tagName) {
+    const t = normalizeTagName(tagName);
+    if (!t) {
+      clearSelectedTags();
+      return;
+    }
+    setSelectedTags(new Set([t]));
   }
 
   async function handleSave(payload) {
@@ -603,12 +690,42 @@ function App() {
           <div className="sidebar__section">
             <div className="sidebar__title">Filter</div>
 
-            <button
-              className={`sidebar__item ${selectedTag === "" ? "is-active" : ""}`}
-              onClick={() => setSelectedTag("")}
-            >
-              All notes <span className="count">{totalNotes}</span>
-            </button>
+            <div className="sidebar__filter-row">
+              <button
+                className={`sidebar__item ${selectedTags.size === 0 ? "is-active" : ""}`}
+                onClick={() => clearSelectedTags()}
+                title="Show all notes (clear tag filters)"
+              >
+                All notes <span className="count">{totalNotes}</span>
+              </button>
+
+              <button
+                className="btn btn-secondary btn-small"
+                onClick={clearSelectedTags}
+                disabled={selectedTags.size === 0}
+                title="Clear selected tags"
+              >
+                Clear
+              </button>
+            </div>
+
+            {selectedTags.size ? (
+              <div className="sidebar__selected" aria-label="Selected tag filters">
+                <div className="sidebar__selected-title">Selected tags</div>
+                <div className="sidebar__chips">
+                  {selectedTagsArray.map((t) => (
+                    <TagPill
+                      key={t}
+                      name={t}
+                      selected
+                      onClick={toggleSelectedTag}
+                      title={`Remove tag filter: ${t}`}
+                    />
+                  ))}
+                </div>
+                <div className="muted small">Tip: notes match any selected tag.</div>
+              </div>
+            ) : null}
 
             <label className="sidebar__toggle">
               <input
@@ -622,18 +739,26 @@ function App() {
 
           <div className="sidebar__section">
             <div className="sidebar__title">Tags</div>
-            <div className="sidebar__list">
+            <div className="sidebar__list" role="list">
               {tags.length ? (
-                tags.map((t) => (
-                  <button
-                    key={t.id}
-                    className={`sidebar__item ${selectedTag === t.name ? "is-active" : ""}`}
-                    onClick={() => setSelectedTag(t.name)}
-                    title={`Filter by ${t.name}`}
-                  >
-                    {t.name} <span className="count">{t.note_count}</span>
-                  </button>
-                ))
+                tags.map((t) => {
+                  const name = normalizeTagName(t.name);
+                  const isSelected = selectedTags.has(name);
+                  return (
+                    <button
+                      key={t.id}
+                      className={`sidebar__item ${isSelected ? "is-active" : ""}`}
+                      onClick={() => toggleSelectedTag(name)}
+                      title={isSelected ? `Remove tag filter: ${name}` : `Add tag filter: ${name}`}
+                      role="listitem"
+                    >
+                      <span className="sidebar__item-left">
+                        <span className="sidebar__item-name">{name}</span>
+                      </span>
+                      <span className="count">{t.note_count}</span>
+                    </button>
+                  );
+                })
               ) : (
                 <div className="muted">No tags yet.</div>
               )}
@@ -641,7 +766,9 @@ function App() {
           </div>
 
           <div className="sidebar__footer">
-            <div className="muted small">Tip: tag notes with comma-separated values in the editor.</div>
+            <div className="muted small">
+              Tip: click tags on a note card to quickly add/remove tag filters.
+            </div>
           </div>
         </aside>
 
@@ -652,6 +779,12 @@ function App() {
           <div className="list-toolbar" aria-label="Notes list controls">
             <div className="list-toolbar__left muted small">
               Showing {sortedNotes.length} note{sortedNotes.length === 1 ? "" : "s"}
+              {selectedTags.size ? (
+                <>
+                  {" "}
+                  • filtered by {selectedTags.size} tag{selectedTags.size === 1 ? "" : "s"}
+                </>
+              ) : null}
             </div>
 
             <label className="list-toolbar__right" aria-label="Sort notes">
@@ -669,7 +802,7 @@ function App() {
             </label>
           </div>
 
-          {!loading && !loadError && notes.length === 0 ? (
+          {!loading && !loadError && sortedNotes.length === 0 ? (
             <div className="empty">
               <div className="empty__title">No notes found</div>
               <div className="empty__desc">Try adjusting your search or tag filters.</div>
@@ -681,7 +814,19 @@ function App() {
 
           <section className="notes-grid" aria-label="Notes list">
             {sortedNotes.map((n) => (
-              <NoteCard key={n.id} note={n} onOpen={openEdit} onDelete={handleDelete} />
+              <NoteCard
+                key={n.id}
+                note={n}
+                onOpen={openEdit}
+                onDelete={handleDelete}
+                selectedTags={selectedTags}
+                onToggleTag={(tagName) => {
+                  // If no tag filters yet, make it a single-select to reduce backend calls.
+                  // After that, it behaves as toggle multi-select.
+                  if (!selectedTags.size) setSingleSelectedTag(tagName);
+                  else toggleSelectedTag(tagName);
+                }}
+              />
             ))}
           </section>
         </main>
