@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import "./App.css";
 import { createNote, deleteNote, listNotes, listTags, updateNote } from "./api";
 
@@ -117,6 +118,7 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
     try {
       await onSave({
         title: trimmedTitle,
+        // Markdown is stored as plain text in the existing "content" field.
         content,
         tags: normalizeTagInput(tagsText),
         is_archived: archived,
@@ -153,16 +155,39 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
         />
       </label>
 
-      <label className="field">
-        <div className="field__label">Content</div>
-        <textarea
-          className="textarea"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          rows={10}
-          placeholder="Write your note..."
-        />
-      </label>
+      <div className="field">
+        <div className="field__label">Markdown</div>
+
+        <div className="md" aria-label="Markdown editor with preview">
+          <div className="md__panel" aria-label="Markdown input">
+            <div className="md__panel-header">
+              <span>Editor</span>
+              <span className="muted small">Tip: use **bold**, _italic_, `code`</span>
+            </div>
+            <div className="md__panel-body">
+              <textarea
+                className="md__textarea"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder={"Write your note in Markdown...\n\n# Heading\n- List item\n\n```js\nconsole.log('hello')\n```"}
+                spellCheck
+              />
+            </div>
+          </div>
+
+          <div className="md__panel" aria-label="Markdown preview">
+            <div className="md__panel-header">
+              <span>Preview</span>
+              <span className="muted small">Live</span>
+            </div>
+            <div className="md__panel-body">
+              <div className="md-preview">
+                <ReactMarkdown>{content || "_Nothing to preview yet._"}</ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <label className="checkbox">
         <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
