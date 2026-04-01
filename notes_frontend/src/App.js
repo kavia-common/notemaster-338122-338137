@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import "./App.css";
 import { createNote, deleteNote, listNotes, listTags, updateNote } from "./api";
+import { applyTheme, getInitialTheme, THEMES, toggleTheme as toggleThemeUtil } from "./theme";
 
 /**
  * Small utility to debounce changing values (for search).
@@ -419,10 +420,15 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
   );
 }
 
+/** Label helper for the theme toggle button. */
+function getThemeToggleLabel(theme) {
+  return theme === THEMES.DARK ? "Light" : "Dark";
+}
+
 // PUBLIC_INTERFACE
 function App() {
   /** Main Notemaster UI: list/search notes, basic tagging, and CRUD operations. */
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState(() => getInitialTheme());
 
   const [notes, setNotes] = useState([]);
   const [totalNotes, setTotalNotes] = useState(0);
@@ -451,7 +457,7 @@ function App() {
   );
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    applyTheme(theme);
   }, [theme]);
 
   async function refreshAll() {
@@ -515,7 +521,7 @@ function App() {
   }
 
   function toggleTheme() {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"));
+    setTheme((prev) => toggleThemeUtil(prev));
   }
 
   return (
@@ -545,8 +551,12 @@ function App() {
           <button className="btn btn-primary" onClick={openCreate}>
             New note
           </button>
-          <button className="btn btn-ghost" onClick={toggleTheme} aria-label="Toggle theme">
-            {theme === "light" ? "Dark" : "Light"}
+          <button
+            className="btn btn-ghost"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === THEMES.DARK ? "light" : "dark"} mode`}
+          >
+            {getThemeToggleLabel(theme)}
           </button>
         </div>
       </header>
