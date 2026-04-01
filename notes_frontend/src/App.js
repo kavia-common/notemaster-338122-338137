@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import "./App.css";
 import { createNote, deleteNote, listNotes, listTags, updateNote } from "./api";
@@ -15,6 +15,20 @@ function useDebouncedValue(value, delayMs) {
   }, [value, delayMs]);
 
   return debounced;
+}
+
+/**
+ * Debounces an effect callback; runs the callback only after `delayMs` has passed
+ * without a change in `deps`.
+ *
+ * This is used for autosave so we don't spam the backend on every keystroke.
+ */
+function useDebouncedEffect(effect, deps, delayMs) {
+  useEffect(() => {
+    const t = setTimeout(() => effect(), delayMs);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, delayMs]);
 }
 
 function normalizeTagInput(input) {
@@ -51,7 +65,9 @@ function NoteCard({ note, onOpen, onDelete }) {
       </p>
 
       <div className="note-card__tags">
-        {note.tags && note.tags.length ? note.tags.slice(0, 5).map((t) => <TagPill key={t} name={t} />) : (
+        {note.tags && note.tags.length ? (
+          note.tags.slice(0, 5).map((t) => <TagPill key={t} name={t} />)
+        ) : (
           <span className="note-card__muted">No tags</span>
         )}
       </div>
@@ -96,15 +112,177 @@ function Modal({ title, children, onClose }) {
   );
 }
 
+/**
+ * Possible editor save states.
+ * - clean: no changes since last successful save
+ * - dirty: local changes not yet saved
+ * - saving: save request in flight
+ * - saved: last save succeeded recently (will fade back to clean)
+ * - error: last save failed
+ */
+const SAVE_STATE = {
+  CLEAN: "clean",
+  DIRTY: "dirty",
+  SAVING: "saving",
+  SAVED: "saved",
+  ERROR: "error",
+};
+
 function NoteEditor({ initialNote, onSave, onCancel }) {
   const [title, setTitle] = useState(initialNote?.title || "");
   const [content, setContent] = useState(initialNote?.content || "");
   const [tagsText, setTagsText] = useState((initialNote?.tags || []).join(", "));
   const [archived, setArchived] = useState(Boolean(initialNote?.is_archived));
+
+  // "saving" here is for the explicit Save/Create button.
   const [saving, setSaving] = useState(false);
+
+  const [saveState, setSaveState] = useState(SAVE_STATE.CLEAN);
+  const [saveMessage, setSaveMessage] = useState("");
   const [error, setError] = useState("");
 
   const isEdit = Boolean(initialNote?.id);
+
+  // Snapshot of what the backend most recently has (or what the modal started with).
+  // We compare the current fields to this to detect unsaved changes.
+  const lastSavedSnapshotRef = useRef({
+    title: initialNote?.title || "",
+    content: initialNote?.content || "",
+    tagsText: (initialNote?.tags || []).join(", "),
+    archived: Boolean(initialNote?.is_archived),
+  });
+
+  // Incrementing request id for autosave; only the latest response updates UI state.
+  const autosaveReqIdRef = useRef(0);
+
+  // Track whether modal is still mounted to avoid state updates after close.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // If the initialNote changes (open a different note / switch to create), reset state.
+  useEffect(() => {
+    const nextTitle = initialNote?.title || "";
+    const nextContent = initialNote?.content || "";
+    const nextTagsText = (initialNote?.tags || []).join(", ");
+    const nextArchived = Boolean(initialNote?.is_archived);
+
+    setTitle(nextTitle);
+    setContent(nextContent);
+    setTagsText(nextTagsText);
+    setArchived(nextArchived);
+
+    lastSavedSnapshotRef.current = {
+      title: nextTitle,
+      content: nextContent,
+      tagsText: nextTagsText,
+      archived: nextArchived,
+    };
+
+    setSaveState(SAVE_STATE.CLEAN);
+    setSaveMessage("");
+    setError("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialNote?.id]);
+
+  function computeIsDirty() {
+    const snap = lastSavedSnapshotRef.current;
+    return (
+      title !== snap.title ||
+      content !== snap.content ||
+      tagsText !== snap.tagsText ||
+      archived !== snap.archived
+    );
+  }
+
+  // Update dirty/clean indicator on any edit.
+  useEffect(() => {
+    if (saving) return; // explicit save in progress; indicator handled elsewhere
+    if (saveState === SAVE_STATE.SAVING) return; // autosave in progress
+    const dirty = computeIsDirty();
+    setSaveState(dirty ? SAVE_STATE.DIRTY : SAVE_STATE.CLEAN);
+    if (!dirty) setSaveMessage("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, content, tagsText, archived]);
+
+  function validateForSave(nextTitle) {
+    const trimmedTitle = nextTitle.trim();
+    if (!trimmedTitle) return "Title is required.";
+    return "";
+  }
+
+  async function runAutosave() {
+    // Autosave only edits existing notes to avoid changing create flows.
+    if (!isEdit) return;
+    if (saving) return; // explicit save is happening
+    const dirty = computeIsDirty();
+    if (!dirty) return;
+
+    const validationError = validateForSave(title);
+    if (validationError) {
+      // Keep it dirty but provide a helpful status. Don't show as "error" toast.
+      setSaveState(SAVE_STATE.DIRTY);
+      setSaveMessage(validationError);
+      return;
+    }
+
+    const reqId = ++autosaveReqIdRef.current;
+    setSaveState(SAVE_STATE.SAVING);
+    setSaveMessage("Saving…");
+
+    try {
+      // Important: use the existing update flow (via App's onSave) so we don't
+      // introduce new API calls or assumptions.
+      await onSave({
+        title: title.trim(),
+        content,
+        tags: normalizeTagInput(tagsText),
+        is_archived: archived,
+        __autosave: true, // hint to App; ignored by backend
+      });
+
+      // Only accept latest autosave response.
+      if (!mountedRef.current || autosaveReqIdRef.current !== reqId) return;
+
+      lastSavedSnapshotRef.current = {
+        title,
+        content,
+        tagsText,
+        archived,
+      };
+
+      setSaveState(SAVE_STATE.SAVED);
+      setSaveMessage("Saved");
+
+      // Fade back to clean after a moment (unless user typed again).
+      setTimeout(() => {
+        if (!mountedRef.current) return;
+        const stillClean = !computeIsDirty();
+        if (stillClean) {
+          setSaveState(SAVE_STATE.CLEAN);
+          setSaveMessage("");
+        }
+      }, 1200);
+    } catch (e) {
+      if (!mountedRef.current || autosaveReqIdRef.current !== reqId) return;
+      setSaveState(SAVE_STATE.ERROR);
+      setSaveMessage("Autosave failed");
+      // Don't set the main error alert for autosave; keep it non-blocking.
+    }
+  }
+
+  // Debounced autosave: after user stops typing for 900ms.
+  useDebouncedEffect(
+    () => {
+      runAutosave();
+    },
+    [title, content, tagsText, archived, isEdit, saving],
+    900
+  );
 
   async function handleSave() {
     setError("");
@@ -115,6 +293,8 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
     }
 
     setSaving(true);
+    setSaveState(SAVE_STATE.SAVING);
+    setSaveMessage("Saving…");
     try {
       await onSave({
         title: trimmedTitle,
@@ -123,16 +303,47 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
         tags: normalizeTagInput(tagsText),
         is_archived: archived,
       });
+
+      // If onSave doesn't close the modal (e.g., create note flow closes), this keeps state consistent.
+      lastSavedSnapshotRef.current = {
+        title,
+        content,
+        tagsText,
+        archived,
+      };
+      setSaveState(SAVE_STATE.SAVED);
+      setSaveMessage("Saved");
     } catch (e) {
       setError(e.message || "Failed to save.");
+      setSaveState(SAVE_STATE.ERROR);
+      setSaveMessage("Save failed");
     } finally {
       setSaving(false);
     }
   }
 
+  function handleCancel() {
+    // Non-blocking: allow closing; existing flows remain unchanged.
+    onCancel();
+  }
+
+  const statusText = (() => {
+    if (saveState === SAVE_STATE.SAVING) return saveMessage || "Saving…";
+    if (saveState === SAVE_STATE.SAVED) return saveMessage || "Saved";
+    if (saveState === SAVE_STATE.ERROR) return saveMessage || "Save failed";
+    if (saveState === SAVE_STATE.DIRTY) return saveMessage || "Unsaved changes";
+    return ""; // clean
+  })();
+
   return (
     <div className="editor">
       {error ? <div className="alert alert-error">{error}</div> : null}
+
+      <div className="editor__status-row" aria-live="polite">
+        <span className={`save-indicator is-${saveState}`} role="status">
+          {statusText || " "}
+        </span>
+      </div>
 
       <label className="field">
         <div className="field__label">Title</div>
@@ -169,7 +380,9 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
                 className="md__textarea"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder={"Write your note in Markdown...\n\n# Heading\n- List item\n\n```js\nconsole.log('hello')\n```"}
+                placeholder={
+                  "Write your note in Markdown...\n\n# Heading\n- List item\n\n```js\nconsole.log('hello')\n```"
+                }
                 spellCheck
               />
             </div>
@@ -195,11 +408,11 @@ function NoteEditor({ initialNote, onSave, onCancel }) {
       </label>
 
       <div className="editor__actions">
-        <button className="btn btn-secondary" onClick={onCancel} disabled={saving}>
+        <button className="btn btn-secondary" onClick={handleCancel} disabled={saving}>
           Cancel
         </button>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : (isEdit ? "Save changes" : "Create note")}
+          {saving ? "Saving..." : isEdit ? "Save changes" : "Create note"}
         </button>
       </div>
     </div>
@@ -272,11 +485,19 @@ function App() {
   }
 
   async function handleSave(payload) {
+    // NoteEditor may add `__autosave` to hint this is background save.
+    // We strip it so it never reaches the backend.
+    const { __autosave, ...cleanPayload } = payload || {};
+
     if (editorNote?.id) {
-      await updateNote(editorNote.id, payload);
+      await updateNote(editorNote.id, cleanPayload);
     } else {
-      await createNote(payload);
+      await createNote(cleanPayload);
     }
+
+    // Autosave should not close the modal or refresh the whole list on every keystroke.
+    if (__autosave) return;
+
     setEditorOpen(false);
     setEditorNote(null);
     await refreshAll();
@@ -373,9 +594,7 @@ function App() {
           </div>
 
           <div className="sidebar__footer">
-            <div className="muted small">
-              Tip: tag notes with comma-separated values in the editor.
-            </div>
+            <div className="muted small">Tip: tag notes with comma-separated values in the editor.</div>
           </div>
         </aside>
 

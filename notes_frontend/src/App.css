@@ -432,6 +432,35 @@ body {
   gap: 12px;
 }
 
+.editor__status-row {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 18px;
+}
+
+.save-indicator {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.save-indicator.is-dirty {
+  color: rgba(239, 68, 68, 0.90);
+}
+
+.save-indicator.is-saving {
+  color: rgba(59, 130, 246, 0.95);
+}
+
+.save-indicator.is-saved {
+  color: rgba(6, 182, 212, 0.95);
+}
+
+.save-indicator.is-error {
+  color: rgba(239, 68, 68, 0.95);
+}
+
 /* Markdown editor (split view) */
 .md {
   display: grid;
