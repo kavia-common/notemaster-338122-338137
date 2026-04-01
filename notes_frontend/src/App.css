@@ -203,6 +203,36 @@ body {
   min-width: 0;
 }
 
+.list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.list-toolbar__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.select {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 9px 10px;
+  outline: none;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.select:focus {
+  border-color: rgba(59, 130, 246, 0.65);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
 .notes-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

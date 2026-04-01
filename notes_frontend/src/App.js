@@ -439,6 +439,8 @@ function App() {
   const debouncedSearch = useDebouncedValue(searchText, 350);
   const [showArchived, setShowArchived] = useState(false);
 
+  const [sortBy, setSortBy] = useState("updated"); // updated | created | title
+
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -455,6 +457,41 @@ function App() {
     }),
     [debouncedSearch, selectedTag, showArchived]
   );
+
+  const sortedNotes = useMemo(() => {
+    const arr = Array.isArray(notes) ? [...notes] : [];
+
+    function toTime(value) {
+      if (!value) return 0;
+      const t = new Date(value).getTime();
+      return Number.isFinite(t) ? t : 0;
+    }
+
+    function cmp(a, b) {
+      if (sortBy === "title") {
+        const ta = (a?.title || "").toLocaleLowerCase();
+        const tb = (b?.title || "").toLocaleLowerCase();
+        if (ta < tb) return -1;
+        if (ta > tb) return 1;
+        // tie-breaker: newest updated first
+        return toTime(b?.updated_at) - toTime(a?.updated_at);
+      }
+
+      if (sortBy === "created") {
+        const diff = toTime(b?.created_at) - toTime(a?.created_at);
+        if (diff !== 0) return diff;
+        return toTime(b?.updated_at) - toTime(a?.updated_at);
+      }
+
+      // default: updated
+      const diff = toTime(b?.updated_at) - toTime(a?.updated_at);
+      if (diff !== 0) return diff;
+      return toTime(b?.created_at) - toTime(a?.created_at);
+    }
+
+    arr.sort(cmp);
+    return arr;
+  }, [notes, sortBy]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -612,6 +649,26 @@ function App() {
           {loadError ? <div className="alert alert-error">{loadError}</div> : null}
           {loading ? <div className="muted">Loading…</div> : null}
 
+          <div className="list-toolbar" aria-label="Notes list controls">
+            <div className="list-toolbar__left muted small">
+              Showing {sortedNotes.length} note{sortedNotes.length === 1 ? "" : "s"}
+            </div>
+
+            <label className="list-toolbar__right" aria-label="Sort notes">
+              <span className="muted small">Sort</span>
+              <select
+                className="select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                aria-label="Sort notes by"
+              >
+                <option value="updated">Updated</option>
+                <option value="created">Created</option>
+                <option value="title">Title</option>
+              </select>
+            </label>
+          </div>
+
           {!loading && !loadError && notes.length === 0 ? (
             <div className="empty">
               <div className="empty__title">No notes found</div>
@@ -623,7 +680,7 @@ function App() {
           ) : null}
 
           <section className="notes-grid" aria-label="Notes list">
-            {notes.map((n) => (
+            {sortedNotes.map((n) => (
               <NoteCard key={n.id} note={n} onOpen={openEdit} onDelete={handleDelete} />
             ))}
           </section>
